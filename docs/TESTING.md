@@ -29,10 +29,25 @@ Scenarios:
 - conflict rejection.
 
 ## VM Tests (macOS host)
-Run:
+Create and bootstrap the Lima VM once:
+
+```bash
+make vm-create
+make vm-bootstrap
+```
+
+Run tests inside the VM:
 
 ```bash
 make test-vm
 ```
 
-This executes `make test` inside the `atomic-ubuntu` Lima VM.
+Delete the VM when you no longer need it:
+
+```bash
+make vm-delete
+```
+
+The VM is named `atomic-ubuntu`.
+
+`make test-vm` executes `make test` inside that VM.

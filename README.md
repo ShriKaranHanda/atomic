@@ -31,6 +31,9 @@ Host filesystem changes are committed only if the script exits `0`.
 - Build: `make build`
 - Unit tests: `make test-unit`
 - Full tests: `make test`
+- Create VM (macOS): `make vm-create`
+- Bootstrap VM deps: `make vm-bootstrap`
 - VM tests from macOS: `make test-vm`
+- Delete VM: `make vm-delete`
 
 See `/Users/karanhanda/atomic/AGENTS.md` for agent workflow and `/Users/karanhanda/atomic/docs/ARCHITECTURE.md` for internals.

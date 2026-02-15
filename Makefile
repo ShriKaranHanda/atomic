@@ -1,7 +1,7 @@
 SHELL := /bin/bash
 GOCACHE ?= $(CURDIR)/.gocache
 
-.PHONY: build test test-unit test-integration test-vm vm-shell vm-bootstrap clean
+.PHONY: build test test-unit test-integration test-vm vm-create vm-shell vm-bootstrap vm-delete clean
 
 build:
 	GOCACHE=$(GOCACHE) go build ./cmd/atomic
@@ -23,11 +23,17 @@ test-integration:
 test-vm:
 	limactl shell atomic-ubuntu -- bash -lc 'cd /Users/karanhanda/atomic && make test'
 
+vm-create:
+	limactl start --name=atomic-ubuntu template://ubuntu
+
 vm-shell:
 	limactl shell atomic-ubuntu
 
 vm-bootstrap:
 	limactl shell atomic-ubuntu -- bash /Users/karanhanda/atomic/scripts/vm/bootstrap-ubuntu.sh
+
+vm-delete:
+	limactl delete --force atomic-ubuntu
 
 clean:
 	rm -rf .gocache
