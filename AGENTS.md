@@ -22,6 +22,11 @@ Maintain `atomic` as a low-overhead, all-or-nothing Linux script runner with str
 - `limactl list` can appear broken under sandboxed status checks. Verify with an unsandboxed check before assuming VM corruption.
 - Compound Lima shell commands should be wrapped with `sh -lc` to avoid argument parsing mistakes.
 - Keep Linux-only syscalls behind build tags (`//go:build linux`) to prevent macOS compile failures.
+- Do not trust client-provided run identity in daemon mode; derive UID/GID from socket peer credentials only.
+- Keep `atomic` client unprivileged and route privileged filesystem work exclusively through `atomicd`.
+
+### 2026-02-19
+- Do not place overlay-path-dependent integration artifacts under `/tmp` because it is often `tmpfs` and may be excluded from overlay-compatible writable mounts. Use `/var/lib/...` for Linux e2e transactional path assertions.
 
 ## PR Checklist
 - [ ] Tests added/updated first.

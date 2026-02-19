@@ -97,6 +97,10 @@ func runInNamespace(spec *RunnerSpec) int {
 
 	cmdArgs := []string{
 		spec.MergedDir,
+		"/usr/bin/setpriv",
+		fmt.Sprintf("--reuid=%d", spec.RunAsUID),
+		fmt.Sprintf("--regid=%d", spec.RunAsGID),
+		"--clear-groups",
 		"/bin/bash",
 		"-ceu",
 		`cd "$1"; shift; exec /bin/bash "$@"`,

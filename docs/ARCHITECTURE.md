@@ -1,28 +1,35 @@
 # Architecture
 
 ## Overview
-`atomic` runs a script inside isolated overlayfs mount namespaces, captures filesystem changes in overlay upperdirs, checks for host-side conflicts, and commits changes to the host filesystem only on successful script exit.
+`atomic` is an unprivileged client that sends run requests to `atomicd` over a Unix socket.
+`atomicd` performs mount/overlay execution, conflict checks, and commit/rollback.
+
+## Identity Model
+- Script identity comes from Unix peer credentials on the socket (`SO_PEERCRED`).
+- `atomic` (non-root caller) runs scripts as caller UID/GID.
+- `sudo atomic` runs scripts as root UID/GID.
+- Client input never overrides run identity in v1.
 
 ## Runtime Pipeline
-1. Preflight
-- Linux + root required.
-- overlayfs support required.
-2. Recovery
-- Scan journal directory and finish/rollback interrupted commits.
-3. Isolated execution
-- Create run workspace.
-- Use `unshare --mount` to isolate mount namespace.
-- Mount root overlay and per-mount overlays for writable real mounts.
-- `chroot` into merged root and execute script.
-4. Diff capture
-- Parse overlay upperdirs into operation list.
-- Support upsert + delete operations, including whiteouts and opaque directory markers.
-5. Conflict checks
-- Fail commit if touched paths/parents changed after transaction start.
-6. Commit with journal
+1. Client request
+- `atomic` sends a JSON request to `atomicd`.
+2. Daemon auth + scheduling
+- Daemon reads peer credentials.
+- Daemon enforces single active transaction in v1.
+3. Recovery
+- Daemon runs journal recovery before processing requests.
+4. Isolated execution
+- Daemon creates run workspace.
+- Daemon launches runner in an isolated mount namespace (`unshare --mount`).
+- Runner mounts root + writable mount overlays.
+- Runner executes script in chroot as caller UID/GID.
+5. Diff capture
+- Parse upperdirs into upsert/delete operations (whiteouts + opaque dirs handled).
+6. Conflict checks
+- Reject commit if touched paths/parents changed after txn start.
+7. Commit with journal
 - Persist journal before and during apply.
 - Backup each target path before mutation.
-- Apply operations deterministically.
 - Roll back from backups on failure.
 
 ## Scope Guarantees

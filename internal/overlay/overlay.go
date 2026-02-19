@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,6 +32,8 @@ type RunnerSpec struct {
 	CWD          string      `json:"cwd"`
 	ScriptPath   string      `json:"script_path"`
 	ScriptArgs   []string    `json:"script_args"`
+	RunAsUID     uint32      `json:"run_as_uid"`
+	RunAsGID     uint32      `json:"run_as_gid"`
 }
 
 type RunConfig struct {
@@ -39,7 +42,12 @@ type RunConfig struct {
 	ScriptPath string
 	ScriptArgs []string
 	CWD        string
+	RunAsUID   uint32
+	RunAsGID   uint32
 	Verbose    bool
+	Stdout     io.Writer
+	Stderr     io.Writer
+	Stdin      io.Reader
 }
 
 type RunResult struct {
@@ -116,7 +124,7 @@ func RunScript(ctx context.Context, cfg RunConfig) (*RunResult, error) {
 
 	rootUpper := filepath.Join(runDir, "upper-root")
 	rootWork := filepath.Join(runDir, "work-root")
-	if err := os.MkdirAll(rootUpper, 0o700); err != nil {
+	if err := os.MkdirAll(rootUpper, 0o755); err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(rootWork, 0o700); err != nil {
@@ -131,7 +139,7 @@ func RunScript(ctx context.Context, cfg RunConfig) (*RunResult, error) {
 		name := sanitizeMountName(mount.MountPoint)
 		upper := filepath.Join(runDir, "upper", name)
 		work := filepath.Join(runDir, "work", name)
-		if err := os.MkdirAll(upper, 0o700); err != nil {
+		if err := os.MkdirAll(upper, 0o755); err != nil {
 			return nil, err
 		}
 		if err := os.MkdirAll(work, 0o700); err != nil {
@@ -149,6 +157,8 @@ func RunScript(ctx context.Context, cfg RunConfig) (*RunResult, error) {
 		CWD:          cfg.CWD,
 		ScriptPath:   cfg.ScriptPath,
 		ScriptArgs:   cfg.ScriptArgs,
+		RunAsUID:     cfg.RunAsUID,
+		RunAsGID:     cfg.RunAsGID,
 	}
 	specPath := filepath.Join(runDir, "runner-spec.json")
 	if err := writeSpec(specPath, spec); err != nil {
@@ -160,9 +170,21 @@ func RunScript(ctx context.Context, cfg RunConfig) (*RunResult, error) {
 		return nil, err
 	}
 	cmd := exec.CommandContext(ctx, "unshare", "--mount", "--propagation", "private", "--fork", "--", exe, "__runner", "--spec", specPath)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	cmd.Stdin = os.Stdin
+	if cfg.Stdout != nil {
+		cmd.Stdout = cfg.Stdout
+	} else {
+		cmd.Stdout = os.Stdout
+	}
+	if cfg.Stderr != nil {
+		cmd.Stderr = cfg.Stderr
+	} else {
+		cmd.Stderr = os.Stderr
+	}
+	if cfg.Stdin != nil {
+		cmd.Stdin = cfg.Stdin
+	} else {
+		cmd.Stdin = os.Stdin
+	}
 	err = cmd.Run()
 	exitCode := 0
 	if err != nil {

@@ -1,0 +1,13 @@
+[Unit]
+Description=atomic daemon
+Requires=atomicd.socket
+After=local-fs.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/atomicd
+Restart=on-failure
+RestartSec=1s
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=atomic daemon socket
+
+[Socket]
+ListenStream=/run/atomicd.sock
+SocketUser=root
+SocketGroup=atomic
+SocketMode=0660
+RemoveOnStop=true
+
+[Install]
+WantedBy=sockets.target

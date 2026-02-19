@@ -10,11 +10,22 @@ import (
 )
 
 func Check() error {
+	return CheckDaemon()
+}
+
+func CheckClient() error {
 	if runtime.GOOS != "linux" {
 		return fmt.Errorf("atomic only supports Linux runtime (got %s)", runtime.GOOS)
 	}
+	return nil
+}
+
+func CheckDaemon() error {
+	if err := CheckClient(); err != nil {
+		return err
+	}
 	if os.Geteuid() != 0 {
-		return fmt.Errorf("atomic must run as root")
+		return fmt.Errorf("atomicd must run as root")
 	}
 	if err := checkOverlaySupport(); err != nil {
 		return err

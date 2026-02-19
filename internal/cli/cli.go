@@ -1,160 +1,129 @@
 package cli
 
 import (
-	"context"
-	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
-	"time"
 
-	"github.com/ShriKaranHanda/atomic/internal/commit"
-	"github.com/ShriKaranHanda/atomic/internal/conflict"
-	"github.com/ShriKaranHanda/atomic/internal/diff"
-	"github.com/ShriKaranHanda/atomic/internal/journal"
-	"github.com/ShriKaranHanda/atomic/internal/overlay"
+	"github.com/ShriKaranHanda/atomic/internal/exitcode"
+	"github.com/ShriKaranHanda/atomic/internal/ipc"
 	"github.com/ShriKaranHanda/atomic/internal/preflight"
-	"github.com/ShriKaranHanda/atomic/internal/recover"
 )
 
-const (
-	ExitOK              = 0
-	ExitScriptFailed    = 10
-	ExitUnsupported     = 20
-	ExitConflict        = 21
-	ExitRecoveryFailure = 30
-)
+const defaultSocketPath = "/run/atomicd.sock"
 
 type Config struct {
-	StateDir      string
-	WorkDir       string
-	JournalDir    string
+	SocketPath    string
 	KeepArtifacts bool
 	Verbose       bool
-	RootPrefix    string
 }
 
 func Run(args []string) int {
 	cfg, rest, err := parseFlags(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		return ExitUnsupported
+		return exitcode.Unsupported
 	}
-	if err := recover.Run(cfg.JournalDir, cfg.RootPrefix); err != nil {
-		fmt.Fprintln(os.Stderr, "recovery failed:", err)
-		return ExitRecoveryFailure
-	}
-	if len(rest) > 0 && rest[0] == "recover" {
-		return ExitOK
+	if err := preflight.CheckClient(); err != nil {
+		fmt.Fprintln(os.Stderr, "preflight failed:", err)
+		return exitcode.Unsupported
 	}
 	if len(rest) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: atomic [flags] <script_path> [script_args...]")
-		return ExitUnsupported
-	}
-	if err := preflight.Check(); err != nil {
-		fmt.Fprintln(os.Stderr, "preflight failed:", err)
-		return ExitUnsupported
+		fmt.Fprintln(os.Stderr, "usage: atomic [flags] <script_path> [script_args...] | atomic recover")
+		return exitcode.Unsupported
 	}
 
-	scriptPath, scriptArgs, cwd, err := resolveScript(rest)
+	conn, err := net.Dial("unix", cfg.SocketPath)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return ExitUnsupported
+		fmt.Fprintf(os.Stderr, "atomicd is not reachable at %s: %v\n", cfg.SocketPath, err)
+		fmt.Fprintln(os.Stderr, "hint: verify atomicd.socket is enabled and running")
+		return exitcode.Unsupported
 	}
+	defer conn.Close()
 
-	txnStart := time.Now().UTC()
-	runID := fmt.Sprintf("%d-%d", txnStart.UnixNano(), os.Getpid())
-	res, err := overlay.RunScript(context.Background(), overlay.RunConfig{
-		RunID:      runID,
-		WorkRoot:   cfg.WorkDir,
-		ScriptPath: scriptPath,
-		ScriptArgs: scriptArgs,
-		CWD:        cwd,
-		Verbose:    cfg.Verbose,
-	})
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "overlay run failed:", err)
-		return ExitUnsupported
-	}
-	if res.ExitCode != 0 {
-		if !cfg.KeepArtifacts {
-			_ = os.RemoveAll(res.RunDir)
-		}
-		return ExitScriptFailed
-	}
+	writer := ipc.NewWriter(conn)
+	reader := ipc.NewReader(conn)
 
-	ops := make([]journal.Operation, 0)
-	for _, mount := range res.UpperDirs {
-		scanned, err := diff.ScanUpperDir(mount.UpperDir, mount.MountPoint)
+	var req ipc.Request
+	if rest[0] == "recover" {
+		req = ipc.Request{Type: ipc.RequestRecover, Version: ipc.Version}
+	} else {
+		scriptPath, scriptArgs, cwd, err := resolveScript(rest)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "scan diff failed:", err)
-			return ExitUnsupported
+			fmt.Fprintln(os.Stderr, err)
+			return exitcode.Unsupported
 		}
-		ops = append(ops, scanned...)
+		req = ipc.Request{
+			Type:          ipc.RequestRun,
+			Version:       ipc.Version,
+			ScriptPath:    scriptPath,
+			ScriptArgs:    scriptArgs,
+			CWD:           cwd,
+			KeepArtifacts: cfg.KeepArtifacts,
+			Verbose:       cfg.Verbose,
+		}
 	}
-	ops = diff.Plan(ops)
-	ops, err = conflict.AttachBaselines(ops)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "baseline collection failed:", err)
-		return ExitUnsupported
-	}
-	if err := conflict.Check(ops, txnStart, nil); err != nil {
-		fmt.Fprintln(os.Stderr, "conflict detected:", err)
-		return ExitConflict
+	if err := writer.WriteRequest(req); err != nil {
+		fmt.Fprintln(os.Stderr, "failed to send request to atomicd:", err)
+		return exitcode.Unsupported
 	}
 
-	backupDir := filepath.Join(cfg.StateDir, "backups", runID)
-	j := &journal.Journal{
-		RunID:         runID,
-		State:         journal.StateCommitting,
-		Ops:           ops,
-		AppliedIndex:  -1,
-		BackupRefs:    map[string]journal.BackupRef{},
-		StartedAt:     txnStart,
-		TxnStart:      txnStart,
-		RunDir:        res.RunDir,
-		BackupDir:     backupDir,
-		KeepArtifacts: cfg.KeepArtifacts,
-	}
-	journalPath := filepath.Join(cfg.JournalDir, runID+".json")
-	eng := commit.Engine{RootPrefix: cfg.RootPrefix}
-	if err := eng.Apply(journalPath, j); err != nil {
-		fmt.Fprintln(os.Stderr, "commit failed:", err)
-		return ExitRecoveryFailure
-	}
-	if err := finalize(journalPath, j); err != nil {
-		fmt.Fprintln(os.Stderr, "cleanup failed:", err)
-		return ExitRecoveryFailure
-	}
-	return ExitOK
-}
-
-func finalize(journalPath string, j *journal.Journal) error {
-	if !j.KeepArtifacts {
-		if err := os.RemoveAll(j.RunDir); err != nil {
-			return err
+	for {
+		ev, err := reader.ReadEvent()
+		if err != nil {
+			if err == io.EOF {
+				fmt.Fprintln(os.Stderr, "atomicd disconnected before returning a result")
+				return exitcode.RecoveryFailure
+			}
+			fmt.Fprintln(os.Stderr, "failed to read response from atomicd:", err)
+			return exitcode.RecoveryFailure
 		}
-		if err := os.RemoveAll(j.BackupDir); err != nil {
-			return err
+		switch ev.Type {
+		case ipc.EventStdout:
+			data, err := ipc.DecodeData(ev.DataB64)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "invalid stdout frame from atomicd:", err)
+				return exitcode.RecoveryFailure
+			}
+			_, _ = os.Stdout.Write(data)
+		case ipc.EventStderr:
+			data, err := ipc.DecodeData(ev.DataB64)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "invalid stderr frame from atomicd:", err)
+				return exitcode.RecoveryFailure
+			}
+			_, _ = os.Stderr.Write(data)
+		case ipc.EventError:
+			if ev.Message != "" {
+				fmt.Fprintln(os.Stderr, ev.Message)
+			}
+			if ev.AtomicExitCode != 0 {
+				return ev.AtomicExitCode
+			}
+			return exitcode.Unsupported
+		case ipc.EventResult:
+			if ev.Message != "" && ev.AtomicExitCode != 0 {
+				fmt.Fprintln(os.Stderr, ev.Message)
+			}
+			return ev.AtomicExitCode
+		case ipc.EventStart:
+			continue
+		default:
+			continue
 		}
 	}
-	if err := os.Remove(journalPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return nil
 }
 
 func parseFlags(args []string) (Config, []string, error) {
 	cfg := Config{}
 	fs := flag.NewFlagSet("atomic", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	fs.StringVar(&cfg.StateDir, "state-dir", "/var/lib/atomic", "state directory")
-	fs.StringVar(&cfg.WorkDir, "work-dir", "/var/lib/atomic/runs", "run workspace")
-	fs.StringVar(&cfg.JournalDir, "journal-dir", "/var/lib/atomic/journal", "journal directory")
+	fs.StringVar(&cfg.SocketPath, "socket", socketPathFromEnv(), "atomicd unix socket path")
 	fs.BoolVar(&cfg.KeepArtifacts, "keep-artifacts", false, "keep run artifacts after completion")
 	fs.BoolVar(&cfg.Verbose, "verbose", false, "verbose output")
-	fs.StringVar(&cfg.RootPrefix, "root-prefix", "", "test-only root prefix")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, nil, err
 	}
@@ -171,4 +140,11 @@ func resolveScript(args []string) (string, []string, string, error) {
 	}
 	cwd := filepath.Dir(scriptPath)
 	return filepath.Clean(scriptPath), args[1:], filepath.Clean(cwd), nil
+}
+
+func socketPathFromEnv() string {
+	if path := os.Getenv("ATOMIC_SOCKET"); path != "" {
+		return path
+	}
+	return defaultSocketPath
 }
