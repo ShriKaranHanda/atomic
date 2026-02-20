@@ -15,6 +15,7 @@ CASES=(
 )
 
 BUILD_ROOT=$(mktemp -d /tmp/atomic-e2e-build.XXXXXX)
+chmod 0755 "$BUILD_ROOT"
 ATOMIC_BIN="$BUILD_ROOT/atomic"
 ATOMICD_BIN="$BUILD_ROOT/atomicd"
 
