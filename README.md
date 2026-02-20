@@ -111,6 +111,14 @@ sudo systemctl enable --now atomicd.socket
 
 If `atomicd.service` does not point to your installed daemon path, update `ExecStart` first.
 
+## Limitations (v0.1.0)
+- Linux only (`kernel 5.4+`).
+- Requires overlayfs support enabled in the running kernel.
+- Transactional guarantees apply to filesystem changes only.
+- Non-filesystem side effects (network calls, service mutations, database writes) are not rolled back.
+- One active transaction at a time (`atomicd` is single-runner in v1).
+- Focused on regular files/directories/symlinks; unsupported special node types fail the transaction.
+
 ## Uninstall
 From repo root:
 
