@@ -3,6 +3,7 @@
 `atomic` runs bash scripts transactionally.
 
 Note: requires Linux kernel `5.4+`.
+Warning: currently tested only on Ubuntu `25.10`.
 
 ## Quick Start
 Clone and install:

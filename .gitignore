@@ -1,3 +1,4 @@
 .gocache/
 /atomic
 coverage.out
+.DS_Store
