@@ -15,6 +15,11 @@ import (
 
 const defaultSocketPath = "/run/atomicd.sock"
 
+const (
+	ansiRed   = "\x1b[31m"
+	ansiReset = "\x1b[0m"
+)
+
 type Config struct {
 	SocketPath    string
 	KeepArtifacts bool
@@ -105,8 +110,11 @@ func Run(args []string) int {
 			}
 			return exitcode.Unsupported
 		case ipc.EventResult:
-			if ev.Message != "" && ev.AtomicExitCode != 0 {
-				fmt.Fprintln(os.Stderr, ev.Message)
+			if ev.AtomicExitCode != 0 {
+				msg := resultMessage(ev)
+				if msg != "" {
+					fmt.Fprintln(os.Stderr, msg)
+				}
 			}
 			return ev.AtomicExitCode
 		case ipc.EventStart:
@@ -115,6 +123,13 @@ func Run(args []string) int {
 			continue
 		}
 	}
+}
+
+func resultMessage(ev ipc.Event) string {
+	if ev.AtomicExitCode == exitcode.ScriptFailed {
+		return ansiRed + "atomic: script failed. Reverting filesystem changes." + ansiReset
+	}
+	return ev.Message
 }
 
 func parseFlags(args []string) (Config, []string, error) {
