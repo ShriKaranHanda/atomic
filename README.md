@@ -11,7 +11,7 @@ Clone and install:
 ```bash
 git clone https://github.com/ShriKaranHanda/atomic.git
 cd atomic
-sudo ./scripts/install.sh
+sudo PATH="$PATH" ./scripts/install.sh
 ```
 
 Try it out:
